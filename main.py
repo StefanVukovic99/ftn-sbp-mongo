@@ -30,21 +30,49 @@ def insertCSV(csv, name, jsonCols = []):
     print(f"read {name} in {round(t1-t0, 2)}s")
     insertData(data, name)
 
-#TODO:
+#DONE:
 def upit1_1_1():
     db['genres_with_keywords'].drop()
     db['metadata'].aggregate([
-        {   
-            # ako nema limit, nego radi 45k x 45k, kod mene 12-14 minuta
-            '$limit':10 
+        # {   
+        #     # ako nema limit, nego radi 45k x 45k, kod mene 12-14 minuta
+        #     '$limit':150
+        # },
+        { '$unwind': '$genres' },
+        { '$match': { 'genres.name': 'Horror'} },
+        { '$project': { 'genres': 1, 'id': 1 } },
+        { "$lookup": 
+           {
+                "from": "keywords",
+                "localField": "id",
+                "foreignField": "id",
+                "pipeline":
+                [
+                    { '$project': {"keywords": 1} },
+                    { '$unwind': '$keywords' }
+                ],
+                "as": "keywordsForGenres"
+            }
         },
+        { '$unwind': '$keywordsForGenres' },
         {
-         '$project': { 'genres': 1, 'id': 1 }
+            # '$group': 
+            # {
+            #     "_id": "$keywordsForGenres.keywords.name",
+            #     "density" : { "$sum": 1}
+            # }
+            "$sortByCount" : "$keywordsForGenres.keywords.name" #todorova magija
         },
-        {"$lookup": {"from": "keywords", "localField": "id", "foreignField": "id", "as": "keywordsForGenres"} },
-        {
-             '$merge': 'genres_with_keywords'
-        }
+        # {   
+        #     # print the top 3 results
+        #     '$limit':3
+        # },
+        { '$merge': 'genres_with_keywords' }
+    ])
+
+def upit1_2_1():
+    db['metadata'].aggregate.drop([
+        
     ])
 
 #GOTOV:    
@@ -159,4 +187,4 @@ def lookupTimeExperiment(expSize = 10):
 
 
 
-upit2_5_1()
+upit1_1_1()
