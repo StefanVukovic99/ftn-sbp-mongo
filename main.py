@@ -34,13 +34,9 @@ def insertCSV(csv, name, jsonCols = []):
 def upit1_1_1():
     db['genres_with_keywords'].drop()
     db['metadata'].aggregate([
-        # {   
-        #     # ako nema limit, nego radi 45k x 45k, kod mene 12-14 minuta
-        #     '$limit':150
-        # },
         { '$unwind': '$genres' },
         { '$match': { 'genres.name': 'Horror'} },
-        { '$project': { 'genres': 1, 'id': 1 } },
+        { '$project': {'genres': 1, 'original_title': 1, 'id': 1 } },
         { "$lookup": 
            {
                 "from": "keywords",
@@ -48,25 +44,15 @@ def upit1_1_1():
                 "foreignField": "id",
                 "pipeline":
                 [
-                    { '$project': {"keywords": 1} },
+                    #{ '$project': {"_id": 0} },
                     { '$unwind': '$keywords' }
                 ],
                 "as": "keywordsForGenres"
             }
         },
         { '$unwind': '$keywordsForGenres' },
-        {
-            # '$group': 
-            # {
-            #     "_id": "$keywordsForGenres.keywords.name",
-            #     "density" : { "$sum": 1}
-            # }
-            "$sortByCount" : "$keywordsForGenres.keywords.name" #todorova magija
-        },
-        # {   
-        #     # print the top 3 results
-        #     '$limit':3
-        # },
+        # { '$project': {"_id": 0} }, # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
+        { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
         { '$merge': 'genres_with_keywords' }
     ])
 
@@ -186,5 +172,7 @@ def lookupTimeExperiment(expSize = 10):
     #db['foodchain'].drop()
 
 
-
+t0 = time.time()
 upit1_1_1()
+t1 = time.time()
+print(t1-t0)
