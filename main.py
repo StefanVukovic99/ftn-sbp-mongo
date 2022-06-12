@@ -86,6 +86,42 @@ def upit1_2_1():
         { '$merge': 'upit1_2_1' }
     ])
 
+#TODO Ovo je tako jadno i bedno ne mogu uopste da prebacim string u broj znaci ubicu se
+def upit1_3_1():
+    db['upit1_3_1'].drop()
+    db['metadata'].aggregate([
+        { "$match": { "vote_average": { "$lt": "4.0" } } },
+        { "$addFields":
+            {
+                "convertedBudget": { "$toDouble": "$budget" },
+                "convertedRevenue": { "$toDouble": "$revenue" },
+                "convertedVoteAverage": { "$toDouble": "$vote_average" },
+                "convertedVoteCount": { "$toDouble": "$vote_count" }
+            }
+        },
+        { "$addFields":
+              {
+                  "profit": { "$subtract" : [ "$convertedRevenue", "$convertedBudget" ] },
+                  "requiredProfit": { "$multiply": [ "$convertedBudget", 1.15 ] }
+              }
+        },
+        { "$project":
+              {
+                "original_title": 1,
+                "convertedBudget": 1,
+                "convertedRevenue": 1,
+                "profit": 1,
+                "vote_average": 1,
+                "vote_count": 1,
+                "acceptable": { "$cond": [ { "$lt": [ "$profit",  "$requiredProfit" ] }, True, False ] }
+            }
+        },
+        { "$match": { "acceptable": True } },
+        { "$sort": { "vote_average": -1 } },
+        
+        { '$merge': 'upit1_3_1' }
+    ])
+
 #GOTOV:    
 def upit2_1_1():   
     db['ratings_hist'].drop()
@@ -199,7 +235,7 @@ def lookupTimeExperiment(expSize = 10):
 
 print("Query started...")
 t0 = time.time()
-upit1_2_1()
+upit1_3_1()
 t1 = time.time()
 print("Query completed in: ")
 print(t1-t0)
