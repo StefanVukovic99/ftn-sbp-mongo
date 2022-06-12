@@ -30,8 +30,9 @@ def insertCSV(csv, name, jsonCols = []):
     print(f"read {name} in {round(t1-t0, 2)}s")
     insertData(data, name)
 
-#DONE: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
+#GOTOV: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
 def upit1_1_1():
+    t0 = time.time()
     db['genres_with_keywords'].drop()
     db['metadata'].aggregate([
         { '$unwind': '$genres' },
@@ -51,10 +52,12 @@ def upit1_1_1():
             }
         },
         { '$unwind': '$keywordsForGenres' },
-        # , # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
+        # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
         { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
+
         { '$merge': 'genres_with_keywords' }
     ])
+    print(f'upit1_1_1, Najčešći keywordi za žanr Horror, za {round(time.time()-t0,2)}s')
 
 #DONE: Za prvih 5 glumaca iz tabele 'credits_per_actor' pronadji sve jezike koji su se govorili u svim filmovima u kojima su oni glumili
 # Hteo sam da napravim tako da bukvalno uzimam prvih 5 dokumenata iz tabele 'credits_per_actor' i da ih koristim u okviru upita ali 
@@ -122,7 +125,7 @@ def upit1_3_1():
         { '$merge': 'upit1_3_1' }
     ])
 
-#GOTOV:    
+#GOTOV - Histogram ocena   
 def upit2_1_1():   
     db['ratings_hist'].drop()
     
@@ -141,7 +144,39 @@ def upit2_1_1():
     t1 = time.time()
     print(f'upit2_1_1, Histogram ocena, za {round(t1-t0,2)}s')
 
-def upit2_5_1():
+#GOTOV - zanrovi za glumca
+def upit2_5_1(actorName):
+    t0 = time.time()
+    db['genres_for_actor'].drop()
+    db['credits'].aggregate([
+        { '$unwind': '$cast' },
+        { '$match': { 'cast.name': actorName } },
+        { '$project': { 'cast': 1, 'id': 1 } },
+        { "$lookup": 
+           {
+                "from": "metadata",
+                "localField": "id",
+                "foreignField": "id",
+                "pipeline":
+                [
+                    { '$project': {"genres": 1} },
+                    { '$unwind': '$genres' }
+                ],
+                "as": "genresForActor"
+            }
+        },
+        { '$unwind': '$genresForActor' },
+        { '$project' : {'_id' : 0}},
+        {
+            "$sortByCount" : "$genresForActor.genres.name" #todorova magija
+        },
+
+        { '$merge': 'genres_for_actor' }
+    ])
+    print(f'upit1_1_1, Najčešći zanrovi za {actorName}, za {round(time.time()-t0,2)}s')
+    
+#GOTOV - broj filmova po glumcu
+def upit2_6_1():
     
     t0 = time.time()
     db['credits_per_actor'].drop()
@@ -168,7 +203,8 @@ def upit2_5_1():
          '$merge':{ 'into': "credits_per_actor" }
         }
     ])
-    print(f'upit2_5_1, Broj filmova po glumcu, za {round(time.time()-t0,2)}s')
+    print(f'upit2_6_1, Broj filmova po glumcu, za {round(time.time()-t0,2)}s')
+    
 def naiveInsert():    
     insertCSV('ratings_small.csv', 'ratings_small')
     
@@ -230,12 +266,4 @@ def lookupTimeExperiment(expSize = 10):
     
     db['fruit'].drop()
     db['animals'].drop()
-    #db['foodchain'].drop()
-
-
-print("Query started...")
-t0 = time.time()
-upit1_3_1()
-t1 = time.time()
-print("Query completed in: ")
-print(t1-t0)
+    db['foodchain'].drop()
