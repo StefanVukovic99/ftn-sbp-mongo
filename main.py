@@ -30,12 +30,12 @@ def insertCSV(csv, name, jsonCols = []):
     print(f"read {name} in {round(t1-t0, 2)}s")
     insertData(data, name)
 
-#DONE:
+#DONE: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
 def upit1_1_1():
     db['genres_with_keywords'].drop()
     db['metadata'].aggregate([
         { '$unwind': '$genres' },
-        { '$match': { 'genres.name': 'Horror'} },
+        { '$match': { 'genres.name': 'Drama'} },
         { '$project': {'genres': 1, 'original_title': 1, 'id': 1 } },
         { "$lookup": 
            {
@@ -51,14 +51,39 @@ def upit1_1_1():
             }
         },
         { '$unwind': '$keywordsForGenres' },
-        # { '$project': {"_id": 0} }, # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
+        # , # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
         { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
         { '$merge': 'genres_with_keywords' }
     ])
 
+#DONE: Za prvih 5 glumaca iz tabele 'credits_per_actor' pronadji sve jezike koji su se govorili u svim filmovima u kojima su oni glumili
+# Hteo sam da napravim tako da bukvalno uzimam prvih 5 dokumenata iz tabele 'credits_per_actor' i da ih koristim u okviru upita ali 
+# sve sto sam pokusao je propalo, mozda bih uspeo u js-u ali ni to nije sigurno
 def upit1_2_1():
-    db['metadata'].aggregate.drop([
-        
+    #query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(5))
+    db['upit1_2_1'].drop()
+    db['credits'].aggregate([
+        #{ "$limit": 50},
+        { "$project": { "crew": 0 } },
+        { '$project': {"_id": 0} }, #potencijalno nece biti neophodan korak
+        { "$unwind": "$cast"},
+        { "$match": { "cast.name": { "$in": [ "Bess Flowers", "Christopher Lee", "John Wayne", "Samuel L. Jackson", "Gérard Depardieu" ] } } },
+        { "$lookup":
+              {
+                  "from": "metadata",
+                  "localField": "id",
+                  "foreignField": "id",
+                  "pipeline":
+                    [
+                        { "$project": { "id": 1, "spoken_languages": 1, "original_title": 1, "_id": 0 } },
+                        { "$unwind": "$spoken_languages"}
+                    ],
+                  "as": "metadataForCredits"
+              }
+        },
+        { "$unwind": "$metadataForCredits" },
+        { "$group": { "_id": "$cast.name", "spoken_languages": { "$addToSet": "$metadataForCredits.spoken_languages.name" } } },
+        { '$merge': 'upit1_2_1' }
     ])
 
 #GOTOV:    
@@ -172,7 +197,9 @@ def lookupTimeExperiment(expSize = 10):
     #db['foodchain'].drop()
 
 
+print("Query started...")
 t0 = time.time()
-upit1_1_1()
+upit1_2_1()
 t1 = time.time()
+print("Query completed in: ")
 print(t1-t0)
