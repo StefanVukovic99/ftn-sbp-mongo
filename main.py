@@ -1,6 +1,5 @@
 import pymongo
-import dateutil
-import math
+from datetime import datetime
 import pandas as pd
 import time
 import random
@@ -22,17 +21,34 @@ def insertData(data, name):
     t1 = time.time()
     print(f"inserted {len(x.inserted_ids)} records of {name} in {round(t1-t0, 2)}s")
 
-def insertCSV(csv, name, jsonCols = []):
+def insertCSV(csv, name, jsonCols = [], dateCols = []):
     t0 = time.time()
     data = pd.read_csv(csv, dtype=str).to_dict('records')
     for document in data:
         for col in jsonCols:
             if(type(document[col]) == str): document[col] = ast.literal_eval(document[col])
+        for col in dateCols:
+            if (type(document[col]) == float):
+                document[col] = str(document[col])
+                document[col] = "1111-11-11" # resolving missing values by setting them to an impossible value
+            print(type(document[col]), document[col])
+            document[col] = datetime.strptime(document[col], '%Y-%m-%d')
+            
     t1 = time.time()
     print(f"read {name} in {round(t1-t0, 2)}s")
     insertData(data, name)
+    
+def findMinDate():
+    db['min_date'].drop()
+    db['metadata'].aggregate([
+        # { "$limit": 50 },
+        { "$project": { "release_date": 1 } },
+        { "$sort": { "release_date": 1 } },
+        { '$merge': 'min_date' }
+        ])
 
-#GOTOV: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
+#DONE: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
+#TODO: Optimize... Current runtime: ~370 seconds (~6 minutes)
 def upit1_1_1():
     print("Query started...")
     t0 = time.time()
@@ -64,6 +80,7 @@ def upit1_1_1():
     print(t1-t0)
 
 #DONE: Za prvih 10 glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima
+#TODO: Optimize... Current runtime: ~30 seconds (this could present a problem with an increase to the number of actors the calculation is based on)
 def upit1_2_1():
     print("Query started...")
     t0 = time.time()
@@ -96,8 +113,8 @@ def upit1_2_1():
     t1 = time.time()
     print(t1-t0)
 
-#DONE Pronadji sve filmove koji imaju prosecnu ocenu manju od 4, vise od 100 ocena i profit manji od 20% (filmovi bez
-# validnih vrednosti za budzet i prihod, ili sa vrednostima manjim od 10000 nisu uzeti u obzir)
+#DONE: Pronadji sve filmove koji imaju prosecnu ocenu manju od 4, vise od 100 ocena i profit manji od 20% (filmovi sa budzetima i prihodima manjim od 10000 nisu uzeti u obzir)
+#TODO: Optimize...? (query request completes in under 1 second)
 def upit1_3_1():
     print("Query started...")
     t0 = time.time()
@@ -149,31 +166,17 @@ def upit1_3_1():
     t1 = time.time()
     print(t1-t0)
 
-#TODO
+#DONE: Prikazi ukupnu kolicinu novca ulozenu u proizvodnju filmova, kao i ukupni profit koji je ostvaren na nivou sledecih vremenskih intervala: 1980-1985, 2010-2015
+#TODO: Optimize...? (query request completes in under 1 second)
 def upit1_4_1():
     print("Query started...")
     t0 = time.time()
-    # query = list(db.metadata.find({},{"_id": 0, "release_date": 1}))
-    # release_date_list = [date['release_date'] for date in query]
-    # i = 1
-    # for x in release_date_list:
-    #     if x == "nan":
-    #         print(i, 'KOBAS KOBAS KOBAS KOBAS')
-    #         i = i + 1
-    #     else:
-    #         print(i, dateutil.parser.parse(x))
-    #         i = i + 1
-    
     db['upit1_4_1'].drop()
     db['metadata'].aggregate([
-        # "$match": { "release_date": { "$gt", None } } },
-        # { "$sort": { "release_date": -1 } },
-        # { "$limit": 10},
         { "$addFields":
             {
                 "economics.convertedBudget": { "$toDouble": "$budget" },
                 "economics.convertedRevenue": { "$toDouble": "$revenue" },
-                #"convertedReleaseDate":  {"$toDate": "$release_date"}
             }
         },
         { "$match":
@@ -185,9 +188,6 @@ def upit1_4_1():
         { "$addFields":
               { "economics.profit": { "$subtract" : [ "$economics.convertedRevenue", "$economics.convertedBudget" ] } }
         },
-        { "$addFields":
-             { "economics.profitInPercent": { "$multiply": [ 100, { "$divide": [ "$economics.profit", "$economics.convertedBudget" ] } ] } }
-        },
         { "$project":
             { 
                 "economics.convertedBudget": 1,
@@ -196,30 +196,48 @@ def upit1_4_1():
                 "convertedReleaseDate": 1,
                 "release_date": 1,
                 "timeGroup":
-                  { "$or":
+                  { "$cond":
                       [
                           { "$and":
                               [
-                                  {"convertedReleaseDate": {"$gte": "$release_date"}},
-                                  {"convertedReleaseDate": {"$lte": "$release_date"}}
+                                  {"$gte": ["$release_date", datetime.strptime('1980-01-01', '%Y-%m-%d')]},
+                                  {"$lte": ["$release_date", datetime.strptime('1985-12-31', '%Y-%m-%d')]}
                               ]
                           }, 
-                          { "$and":
-                              [
-                                  {"convertedReleaseDate": {"$gte", "$release_date"}},
-                                  {"convertedReleaseDate": {"$lte", "$release_date"}}
-                              ]
+                          "1980-1985",
+                          { "$cond":
+                               [
+                                   { "$and":
+                                        [
+                                            {"$gte": ["$release_date", datetime.strptime('2010-01-01', '%Y-%m-%d')]},
+                                            {"$lte": ["$release_date", datetime.strptime('2015-12-31', '%Y-%m-%d')]}
+                                        ]
+                                   },
+                                   "2010-2015",
+                                   "---------"
+                               ]
                           }
                       ]
-                  } 
+                  }
             }
+        },
+        { "$match": { "$or": [ { "timeGroup": "1980-1985" }, { "timeGroup": "2010-2015", } ] } },
+        { "$group":
+              {
+                  "_id": "$timeGroup",
+                  "totalBudget": { "$sum": "$economics.convertedBudget" },
+                  "totalProfit": { "$sum": "$economics.profit" },
+              }
         },
         { '$merge': 'upit1_4_1' }
     ])
     t1 = time.time()
     print(t1-t0)
     
-#DONE Izlistaj (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
+    # db['upit1_4_1'].find().sort({"economics.convertedBudget": 1}).skip(db['upit1_4_1'].count() / 2).limit(1) # find median for field, not used
+
+#DONE: Izlistaj (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
+#DONE: Optimized by using an index. Time reduced from ~20 minutes (~1200 seconds) to ~12 seconds
 def upit1_5_1():
     
     print("Creating index...")
@@ -278,8 +296,7 @@ def upit1_5_1():
                       { "metadataForCredits._id": { "$eq": "Assistant Director" } },
                       { "metadataForCredits._id": { "$eq": "Writer" } },
                       { "metadataForCredits._id": { "$eq": "Producer" } },
-                      { "metadataForCredits._id": { "$eq": "Executive Producer" } },
-                      { "metadataForCredits._id": { "$eq": "Story" } }
+                      { "metadataForCredits._id": { "$eq": "Executive Producer" } }
                   ]
              }
         },
@@ -380,7 +397,7 @@ def upit2_6_1():
 def naiveInsert():    
     insertCSV('ratings_small.csv', 'ratings_small')
     
-    insertCSV('movies_metadata.csv', 'metadata', ['belongs_to_collection', 'genres', 'production_companies', 'production_countries', 'spoken_languages'])
+    insertCSV('movies_metadata.csv', 'metadata', ['belongs_to_collection', 'genres', 'production_companies', 'production_countries', 'spoken_languages'], ['release_date'])
     
     insertCSV('keywords.csv', 'keywords', ['keywords'])
     
@@ -442,4 +459,5 @@ def lookupTimeExperiment(expSize = 10):
 
 
 
-upit1_4_1()
+upit1_5_1()
+
