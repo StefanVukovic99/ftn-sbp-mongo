@@ -517,7 +517,7 @@ def lookupTimeExperiment(expSize = 10):
     db['foodchain'].drop()
 
 def benchmark():
-    #insertCollections()
+    insertCollections()
     
     times = {'basic':[], 'optimized':[]}
     for half in range (1,3):
