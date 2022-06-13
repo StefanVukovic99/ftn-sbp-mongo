@@ -1,5 +1,6 @@
 import pymongo
 from datetime import datetime
+import pprint
 import pandas as pd
 import time
 import random
@@ -9,7 +10,7 @@ from datetime import datetime
 import pprint
 
 client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client["movies"]
+db = client["movies"] # Create a mongo database 'movies'
 char_set = string.ascii_uppercase + string.digits
 
 def randString():
@@ -50,7 +51,7 @@ def findMinDate():
         { '$merge': 'min_date' }
         ])
 
-#DONE: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
+#DONE: Pronadji sve kljucne reci koje se povezuju sa filmovima odredjenog zanra, i poredjaj ih od najcescih do najredjih (zanr koriscen u upitu je 'Drama')
 #TODO: Optimize... Current runtime: ~370 seconds (~6 minutes)
 # =============================================================================
 # def upit1_1_1(genre = 'Drama'):
@@ -80,7 +81,7 @@ def findMinDate():
 #     ])
 # =============================================================================
 
-#DONE: Za prvih 10 glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima
+#DONE: Za prvih n glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima (tokom testiranja vrednost n = 10)
 #TODO: Optimize... Current runtime: ~30 seconds (this could present a problem with an increase to the number of actors the calculation is based on)
 def upit1_2_1(n = 10):
     query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
@@ -166,7 +167,7 @@ def upit1_3_1():
     t1 = time.time()
     print(t1-t0)
 
-#DONE: Prikazi ukupnu kolicinu novca ulozenu u proizvodnju filmova, kao i ukupni profit koji je ostvaren na nivou sledecih vremenskih intervala: 1980-1985, 2010-2015
+#DONE: Prikazi ukupnu kolicinu novca ulozenu u proizvodnju filmova, kao i ukupni profit koji je ostvaren u okviru sledecih vremenskih intervala: 1980-1985, 2010-2015
 #TODO: Optimize...? (query request completes in under 1 second)
 def upit1_4_1():
     print("Query started...")
@@ -233,10 +234,8 @@ def upit1_4_1():
     ])
     t1 = time.time()
     print(t1-t0)
-    
-    # db['upit1_4_1'].find().sort({"economics.convertedBudget": 1}).skip(db['upit1_4_1'].count() / 2).limit(1) # find median for field, not used
 
-#DONE: Izlistaj (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
+#DONE: Izlistaj polja (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
 #DONE: Optimized by using an index. Time reduced from ~20 minutes (~1200 seconds) to ~12 seconds
 def upit1_5_1():
     
@@ -307,6 +306,10 @@ def upit1_5_1():
         { "$sort": { "profit": -1 } },
         { '$merge': 'upit1_5_1' }
     ], allowDiskUse = True)
+    print("Dropping index..")
+    coll.drop_index([ ("id", -1) ])
+    print("Index dropped.")
+    pprint.pprint(coll.index_information())
     t1 = time.time()
     print(t1-t0)
 
@@ -382,6 +385,7 @@ def upit2_3_1(directorName = 'Quentin Tarantino'):
 def upit2_4_1(actorName = 'Eddie Murphy'):
     db['genres_for_actor'].drop()
     db['credits'].aggregate([
+        { "$limit": 50 },
         { '$unwind': '$cast' },
         { '$match': { 'cast.name': actorName } },
         { '$project': { 'cast': 1, 'id': 1 } },
@@ -458,6 +462,9 @@ def insertCollections():
     
     insertCSV('credits.csv', 'credits', jsonCols =['cast', 'crew'])
     
+    insertCSV('ratings.csv', 'ratings')
+
+
 # Eksperiment je utvrdio da 40k x 40k lookup merge treba oko 600 sekundi
 def lookupTimeExperiment(expSize = 10):
     fruitData = []
