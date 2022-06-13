@@ -1,4 +1,6 @@
 import pymongo
+import dateutil
+import math
 import pandas as pd
 import time
 import random
@@ -32,8 +34,9 @@ def insertCSV(csv, name, jsonCols = []):
 
 #GOTOV: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
 def upit1_1_1():
+    print("Query started...")
     t0 = time.time()
-    db['genres_with_keywords'].drop()
+    db['upit1_1_1'].drop()
     db['metadata'].aggregate([
         { '$unwind': '$genres' },
         { '$match': { 'genres.name': 'Drama'} },
@@ -55,22 +58,24 @@ def upit1_1_1():
         # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
         { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
 
-        { '$merge': 'genres_with_keywords' }
+        { '$merge': 'upit1_1_1' }
     ])
-    print(f'upit1_1_1, Najčešći keywordi za žanr Horror, za {round(time.time()-t0,2)}s')
+    t1 = time.time()
+    print(t1-t0)
 
-#DONE: Za prvih 5 glumaca iz tabele 'credits_per_actor' pronadji sve jezike koji su se govorili u svim filmovima u kojima su oni glumili
-# Hteo sam da napravim tako da bukvalno uzimam prvih 5 dokumenata iz tabele 'credits_per_actor' i da ih koristim u okviru upita ali 
-# sve sto sam pokusao je propalo, mozda bih uspeo u js-u ali ni to nije sigurno
+#DONE: Za prvih 10 glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima
 def upit1_2_1():
-    #query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(5))
+    print("Query started...")
+    t0 = time.time()
+    query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(10))
+    print('Searching for actors: ', [actor["name"] for actor in query])
     db['upit1_2_1'].drop()
     db['credits'].aggregate([
         #{ "$limit": 50},
         { "$project": { "crew": 0 } },
         { '$project': {"_id": 0} }, #potencijalno nece biti neophodan korak
         { "$unwind": "$cast"},
-        { "$match": { "cast.name": { "$in": [ "Bess Flowers", "Christopher Lee", "John Wayne", "Samuel L. Jackson", "Gérard Depardieu" ] } } },
+        { "$match": { "cast.name": { "$in": [actor["name"] for actor in query] } } },
         { "$lookup":
               {
                   "from": "metadata",
@@ -88,42 +93,209 @@ def upit1_2_1():
         { "$group": { "_id": "$cast.name", "spoken_languages": { "$addToSet": "$metadataForCredits.spoken_languages.name" } } },
         { '$merge': 'upit1_2_1' }
     ])
+    t1 = time.time()
+    print(t1-t0)
 
-#TODO Ovo je tako jadno i bedno ne mogu uopste da prebacim string u broj znaci ubicu se
+#DONE Pronadji sve filmove koji imaju prosecnu ocenu manju od 4, vise od 100 ocena i profit manji od 20% (filmovi bez
+# validnih vrednosti za budzet i prihod, ili sa vrednostima manjim od 10000 nisu uzeti u obzir)
 def upit1_3_1():
+    print("Query started...")
+    t0 = time.time()
     db['upit1_3_1'].drop()
     db['metadata'].aggregate([
-        { "$match": { "vote_average": { "$lt": "4.0" } } },
         { "$addFields":
             {
-                "convertedBudget": { "$toDouble": "$budget" },
-                "convertedRevenue": { "$toDouble": "$revenue" },
+                "economics.convertedBudget": { "$toDouble": "$budget" },
+                "economics.convertedRevenue": { "$toDouble": "$revenue" },
                 "convertedVoteAverage": { "$toDouble": "$vote_average" },
-                "convertedVoteCount": { "$toDouble": "$vote_count" }
+                "convertedVoteCount": { "$toDouble": "$vote_count" },
             }
+        },
+        { "$match":
+             { 
+                "convertedVoteAverage": { "$lte": 4.0 },
+                "convertedVoteCount": { "$gte": 100 },
+                "economics.convertedRevenue": { "$gt": 10000 },
+                "economics.convertedBudget": { "$gt": 10000 } 
+             } 
         },
         { "$addFields":
               {
-                  "profit": { "$subtract" : [ "$convertedRevenue", "$convertedBudget" ] },
-                  "requiredProfit": { "$multiply": [ "$convertedBudget", 1.15 ] }
+                  
+                  "economics.requiredRevenue": { "$multiply": [ "$economics.convertedBudget", 1.20 ] },
+                  "economics.profit": { "$subtract" : [ "$economics.convertedRevenue", "$economics.convertedBudget" ] }
               }
         },
+        { "$addFields": { "economics.profitInPercent": { "$multiply": [ 100, { "$divide": [ "$economics.profit", "$economics.convertedBudget" ] } ] } } },
         { "$project":
               {
                 "original_title": 1,
-                "convertedBudget": 1,
-                "convertedRevenue": 1,
-                "profit": 1,
-                "vote_average": 1,
-                "vote_count": 1,
-                "acceptable": { "$cond": [ { "$lt": [ "$profit",  "$requiredProfit" ] }, True, False ] }
+                "release_date": 1,
+                "economics.convertedBudget": 1,
+                "economics.convertedRevenue": 1,
+                "economics.profit": 1,
+                "economics.profitInPercent": 1,
+                "economics.requiredRevenue": 1,
+                "convertedVoteAverage": 1,
+                "convertedVoteCount": 1,
+                "acceptable": { "$cond": [ { "$lt": [ "$economics.convertedRevenue",  "$economics.requiredRevenue" ] }, True, False ] }
             }
         },
         { "$match": { "acceptable": True } },
-        { "$sort": { "vote_average": -1 } },
-        
+        { "$project": { "acceptable": 0 } },
+        { "$sort": { "profitInPercent": -1 } },
         { '$merge': 'upit1_3_1' }
     ])
+    t1 = time.time()
+    print(t1-t0)
+
+#TODO
+def upit1_4_1():
+    print("Query started...")
+    t0 = time.time()
+    # query = list(db.metadata.find({},{"_id": 0, "release_date": 1}))
+    # release_date_list = [date['release_date'] for date in query]
+    # i = 1
+    # for x in release_date_list:
+    #     if x == "nan":
+    #         print(i, 'KOBAS KOBAS KOBAS KOBAS')
+    #         i = i + 1
+    #     else:
+    #         print(i, dateutil.parser.parse(x))
+    #         i = i + 1
+    
+    db['upit1_4_1'].drop()
+    db['metadata'].aggregate([
+        # "$match": { "release_date": { "$gt", None } } },
+        # { "$sort": { "release_date": -1 } },
+        # { "$limit": 10},
+        { "$addFields":
+            {
+                "economics.convertedBudget": { "$toDouble": "$budget" },
+                "economics.convertedRevenue": { "$toDouble": "$revenue" },
+                #"convertedReleaseDate":  {"$toDate": "$release_date"}
+            }
+        },
+        { "$match":
+             { 
+                "economics.convertedRevenue": { "$gt": 10000 },
+                "economics.convertedBudget": { "$gt": 10000 } 
+             } 
+        },
+        { "$addFields":
+              { "economics.profit": { "$subtract" : [ "$economics.convertedRevenue", "$economics.convertedBudget" ] } }
+        },
+        { "$addFields":
+             { "economics.profitInPercent": { "$multiply": [ 100, { "$divide": [ "$economics.profit", "$economics.convertedBudget" ] } ] } }
+        },
+        { "$project":
+            { 
+                "economics.convertedBudget": 1,
+                "economics.convertedRevenue": 1,
+                "economics.profit": 1,
+                "convertedReleaseDate": 1,
+                "release_date": 1,
+                "timeGroup":
+                  { "$or":
+                      [
+                          { "$and":
+                              [
+                                  {"convertedReleaseDate": {"$gte": "$release_date"}},
+                                  {"convertedReleaseDate": {"$lte": "$release_date"}}
+                              ]
+                          }, 
+                          { "$and":
+                              [
+                                  {"convertedReleaseDate": {"$gte", "$release_date"}},
+                                  {"convertedReleaseDate": {"$lte", "$release_date"}}
+                              ]
+                          }
+                      ]
+                  } 
+            }
+        },
+        { '$merge': 'upit1_4_1' }
+    ])
+    t1 = time.time()
+    print(t1-t0)
+    
+#DONE Izlistaj (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
+def upit1_5_1():
+    
+    print("Creating index...")
+    coll = db.credits
+    resp = coll.create_index([ ("id", -1) ])
+    print("Index response: ", resp)
+    print("Index created.")
+    
+    print("Query started...")
+    t0 = time.time()
+    db['upit1_5_1'].drop()
+    db['metadata'].aggregate([
+        { "$addFields":
+            {
+                "economics.convertedBudget": { "$toDouble": "$budget" },
+                "economics.convertedRevenue": { "$toDouble": "$revenue" }
+            }
+        },
+        { "$addFields":
+            { "economics.profit": { "$subtract": [ "$economics.convertedRevenue", "$economics.convertedBudget" ] } }
+        },
+        { "$lookup":
+             {
+                  "from": "credits",
+                  "localField": "id",
+                  "foreignField": "id",
+                  "pipeline":
+                     [
+                         { "$project": { "crew": 1, "_id": 0 } },
+                         { "$unwind": "$crew"},
+                         { "$group":
+                             {
+                                 "_id": "$crew.job",
+                                 "names": { "$push": "$crew.name" }
+                             }
+                         }
+                     ],
+                  "as": "metadataForCredits"
+              }
+        },
+        { "$project": { "_id": 0 } },
+        { "$unwind": "$metadataForCredits" },
+        { "$project": 
+              { 
+                  "_id": 0,
+                  "id": 1,
+                  "economics.profit": 1,
+                  "original_title": 1,
+                  "metadataForCredits": 1
+              }
+        },
+        { "$match": 
+             { "$or":
+                  [
+                      { "metadataForCredits._id": { "$eq": "Director" } },
+                      { "metadataForCredits._id": { "$eq": "Assistant Director" } },
+                      { "metadataForCredits._id": { "$eq": "Writer" } },
+                      { "metadataForCredits._id": { "$eq": "Producer" } },
+                      { "metadataForCredits._id": { "$eq": "Executive Producer" } },
+                      { "metadataForCredits._id": { "$eq": "Story" } }
+                  ]
+             }
+        },
+        { "$group":
+            {
+                "_id": "$id",
+                "title": { "$first": "$original_title" },
+                "crew_member": { "$push": "$metadataForCredits" },
+                "profit": { "$first": "$economics.profit" }
+            }
+        },
+        { "$sort": { "profit": -1 } },
+        { '$merge': 'upit1_5_1' }
+    ], allowDiskUse = True)
+    t1 = time.time()
+    print(t1-t0)
 
 #GOTOV - Histogram ocena   
 def upit2_1_1():   
@@ -267,3 +439,7 @@ def lookupTimeExperiment(expSize = 10):
     db['fruit'].drop()
     db['animals'].drop()
     db['foodchain'].drop()
+
+
+
+upit1_4_1()
