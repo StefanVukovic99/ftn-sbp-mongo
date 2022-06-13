@@ -5,6 +5,8 @@ import time
 import random
 import string
 import ast
+from datetime import datetime
+import pprint
 
 client = pymongo.MongoClient("mongodb://localhost:27017/")
 db = client["movies"]
@@ -21,9 +23,12 @@ def insertData(data, name):
     t1 = time.time()
     print(f"inserted {len(x.inserted_ids)} records of {name} in {round(t1-t0, 2)}s")
 
-def insertCSV(csv, name, jsonCols = [], dateCols = []):
+def insertCSV(csv, name, jsonCols = [], dateCols = [], converts = {}):
     t0 = time.time()
-    data = pd.read_csv(csv, dtype=str).to_dict('records')
+    data = pd.read_csv(csv, dtype=str)
+    data = data.astype(converts)
+    data=data.to_dict('records')
+        
     for document in data:
         for col in jsonCols:
             if(type(document[col]) == str): document[col] = ast.literal_eval(document[col])
@@ -31,7 +36,6 @@ def insertCSV(csv, name, jsonCols = [], dateCols = []):
             if (type(document[col]) == float):
                 document[col] = str(document[col])
                 document[col] = "1111-11-11" # resolving missing values by setting them to an impossible value
-            print(type(document[col]), document[col])
             document[col] = datetime.strptime(document[col], '%Y-%m-%d')
             
     t1 = time.time()
@@ -41,7 +45,6 @@ def insertCSV(csv, name, jsonCols = [], dateCols = []):
 def findMinDate():
     db['min_date'].drop()
     db['metadata'].aggregate([
-        # { "$limit": 50 },
         { "$project": { "release_date": 1 } },
         { "$sort": { "release_date": 1 } },
         { '$merge': 'min_date' }
@@ -49,46 +52,41 @@ def findMinDate():
 
 #DONE: Pronadji sve kljucne reci koje se pojavljuju kod filmova odredjenog zanra, i poredjaj ih od najcescih do najredjih
 #TODO: Optimize... Current runtime: ~370 seconds (~6 minutes)
-def upit1_1_1():
-    print("Query started...")
-    t0 = time.time()
-    db['upit1_1_1'].drop()
-    db['metadata'].aggregate([
-        { '$unwind': '$genres' },
-        { '$match': { 'genres.name': 'Drama'} },
-        { '$project': {'genres': 1, 'original_title': 1, 'id': 1 } },
-        { "$lookup": 
-           {
-                "from": "keywords",
-                "localField": "id",
-                "foreignField": "id",
-                "pipeline":
-                [
-                    #{ '$project': {"_id": 0} },
-                    { '$unwind': '$keywords' }
-                ],
-                "as": "keywordsForGenres"
-            }
-        },
-        { '$unwind': '$keywordsForGenres' },
-        # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
-        { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
-
-        { '$merge': 'upit1_1_1' }
-    ])
-    t1 = time.time()
-    print(t1-t0)
+# =============================================================================
+# def upit1_1_1(genre = 'Drama'):
+#     db['upit1_1_1'].drop()
+#     db['metadata'].aggregate([
+#         { '$unwind': '$genres' },
+#         { '$match': { 'genres.name': genre} },
+#         { '$project': {'genres': 1, 'original_title': 1, 'id': 1 } },
+#         { "$lookup": 
+#            {
+#                 "from": "keywords",
+#                 "localField": "id",
+#                 "foreignField": "id",
+#                 "pipeline":
+#                 [
+#                     #{ '$project': {"_id": 0} },
+#                     { '$unwind': '$keywords' }
+#                 ],
+#                 "as": "keywordsForGenres"
+#             }
+#         },
+#         { '$unwind': '$keywordsForGenres' },
+#         # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
+#         { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
+# 
+#         { '$merge': 'upit1_1_1' }
+#     ])
+# =============================================================================
 
 #DONE: Za prvih 10 glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima
 #TODO: Optimize... Current runtime: ~30 seconds (this could present a problem with an increase to the number of actors the calculation is based on)
-def upit1_2_1():
-    print("Query started...")
-    t0 = time.time()
-    query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(10))
+def upit1_2_1(n = 10):
+    query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
     print('Searching for actors: ', [actor["name"] for actor in query])
     db['upit1_2_1'].drop()
     db['credits'].aggregate([
-        #{ "$limit": 50},
         { "$project": { "crew": 0 } },
         { '$project': {"_id": 0} }, #potencijalno nece biti neophodan korak
         { "$unwind": "$cast"},
@@ -110,8 +108,10 @@ def upit1_2_1():
         { "$group": { "_id": "$cast.name", "spoken_languages": { "$addToSet": "$metadataForCredits.spoken_languages.name" } } },
         { '$merge': 'upit1_2_1' }
     ])
-    t1 = time.time()
-    print(t1-t0)
+        
+def upit1_2_2(n = 10):
+    db.metadata.create_index([ ("id", 1) ])
+    upit1_2_1(n)
 
 #DONE: Pronadji sve filmove koji imaju prosecnu ocenu manju od 4, vise od 100 ocena i profit manji od 20% (filmovi sa budzetima i prihodima manjim od 10000 nisu uzeti u obzir)
 #TODO: Optimize...? (query request completes in under 1 second)
@@ -240,11 +240,7 @@ def upit1_4_1():
 #DONE: Optimized by using an index. Time reduced from ~20 minutes (~1200 seconds) to ~12 seconds
 def upit1_5_1():
     
-    print("Creating index...")
-    coll = db.credits
-    resp = coll.create_index([ ("id", -1) ])
-    print("Index response: ", resp)
-    print("Index created.")
+    db.credits.create_index([ ("id", -1) ])
     
     print("Query started...")
     t0 = time.time()
@@ -318,11 +314,10 @@ def upit1_5_1():
 def upit2_1_1():   
     db['ratings_hist'].drop()
     
-    t0 = time.time()
     db['ratings_small'].aggregate([
         { 
          '$group': { '_id': "$rating", 'count': { '$sum': 1 } } 
-        },
+         },
         {
          '$sort' : { '_id' : 1 } 
         },
@@ -330,12 +325,61 @@ def upit2_1_1():
          '$merge':{ 'into': "ratings_hist" }
         }
     ]);
-    t1 = time.time()
-    print(f'upit2_1_1, Histogram ocena, za {round(t1-t0,2)}s')
+
+def upit2_2_1():
+    db['avg_roi_for_genre'].drop()
+    db['metadata'].aggregate([
+        { '$unwind': '$genres' },
+        { 
+         "$project" : {
+          '_id' : 0,
+          'id': 1,
+          'genre': '$genres.name',
+          'roi': { 
+              "$cond": [
+                  {"$or":[
+                      { "$lte": [ "$revenue", 1000 ] }, 
+                      { "$lte" : ["$budget", 1000] }
+                  ]},
+                  "N/A", 
+                  {'$multiply': [
+                      {'$divide': [
+                          { '$subtract' : [ '$revenue', '$budget' ] }, 
+                          '$budget'
+                      ]},
+                      100
+                  ]} 
+            ]},
+          }
+        },
+        {
+         '$group': {
+             '_id' : '$genre',
+             'expectedROI': { "$avg": "$roi" },
+             }
+        },
+        {
+         '$sort': {'expectedROI': -1}
+        },
+        { '$merge': {'into': 'avg_roi_for_genre' }}
+    ])
+
+#GOTOV - glumci za rezisera
+def upit2_3_1(directorName = 'Quentin Tarantino'):
+    db['cast_for_director'].drop()
+    db['credits'].aggregate([
+        { '$unwind': '$crew' },
+        { '$match': { 'crew.name': directorName, 'crew.job': 'Director' } },
+        { '$unwind': '$cast' },
+        { '$project' : {'_id' : 0}},
+        {
+            "$sortByCount" : "$cast.name"
+        },
+        { '$merge': {'into': 'cast_for_director' }}
+    ])
 
 #GOTOV - zanrovi za glumca
-def upit2_5_1(actorName):
-    t0 = time.time()
+def upit2_4_1(actorName = 'Eddie Murphy'):
     db['genres_for_actor'].drop()
     db['credits'].aggregate([
         { '$unwind': '$cast' },
@@ -357,17 +401,18 @@ def upit2_5_1(actorName):
         { '$unwind': '$genresForActor' },
         { '$project' : {'_id' : 0}},
         {
-            "$sortByCount" : "$genresForActor.genres.name" #todorova magija
+            "$sortByCount" : "$genresForActor.genres.name"
         },
 
         { '$merge': 'genres_for_actor' }
     ])
-    print(f'upit1_1_1, Najčešći zanrovi za {actorName}, za {round(time.time()-t0,2)}s')
+
+def upit2_4_2(actorName = 'Eddie Murphy'):
+    db.metadata.create_index([ ("id", 1) ])
+    upit2_4_1(actorName)
     
 #GOTOV - broj filmova po glumcu
-def upit2_6_1():
-    
-    t0 = time.time()
+def upit2_5_1():
     db['credits_per_actor'].drop()
     db['credits'].aggregate([
         {
@@ -392,20 +437,27 @@ def upit2_6_1():
          '$merge':{ 'into': "credits_per_actor" }
         }
     ])
-    print(f'upit2_6_1, Broj filmova po glumcu, za {round(time.time()-t0,2)}s')
     
-def naiveInsert():    
+def insertCollections():    
     insertCSV('ratings_small.csv', 'ratings_small')
     
-    insertCSV('movies_metadata.csv', 'metadata', ['belongs_to_collection', 'genres', 'production_companies', 'production_countries', 'spoken_languages'], ['release_date'])
+    insertCSV(
+        'movies_metadata.csv', 
+        'metadata', 
+        jsonCols = ['belongs_to_collection', 'genres', 'production_companies', 'production_countries', 'spoken_languages'],
+        converts = {
+            'budget': int,
+            'revenue': int
+        },
+        dateCols = ['release_date']
+    )
     
-    insertCSV('keywords.csv', 'keywords', ['keywords'])
+    insertCSV('keywords.csv', 'keywords', jsonCols = ['keywords'])
     
     insertCSV('links.csv', 'links')
     
-    insertCSV('credits.csv', 'credits', ['cast', 'crew'])
-
-
+    insertCSV('credits.csv', 'credits', jsonCols =['cast', 'crew'])
+    
 # Eksperiment je utvrdio da 40k x 40k lookup merge treba oko 600 sekundi
 def lookupTimeExperiment(expSize = 10):
     fruitData = []
@@ -457,7 +509,23 @@ def lookupTimeExperiment(expSize = 10):
     db['animals'].drop()
     db['foodchain'].drop()
 
+def benchmark():
+    #insertCollections()
+    
+    times = {'basic':[], 'optimized':[]}
+    for half in range (1,3):
+        for n in range(1,6):
+            for version in range(1,3):
+                for col in db.collection_names():
+                    db[col].drop_indexes()
+                functionName = f"upit{half}_{n}_{version}"
+                if functionName in globals():
+                    t0=time.time()
+                    print(f'started {functionName} at {datetime.fromtimestamp(t0).strftime("%Y-%B-%d %H:%M:%S")}')
+                    globals()[functionName]()
+                    timeRes = time.time() - t0
+                    print(f'{functionName} za {round(timeRes,2)}s')
+                    times['basic' if version == 1 else 'optimized'].append({functionName : timeRes})
+    pprint.pprint(times, width=1)
 
-
-upit1_5_1()
-
+benchmark()
