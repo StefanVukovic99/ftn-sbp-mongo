@@ -103,7 +103,6 @@ def speed_collection():
     db.credits.drop_indexes()
         
 #DONE: Pronadji sve kljucne reci koje se povezuju sa filmovima odredjenog zanra, i poredjaj ih od najcescih do najredjih (zanr koriscen u upitu je 'Drama')
-#TODO: Optimized by using an index. Runtime reduced from ~400 seconds (~6.5 minutes) to ~3 seconds
 def upit1_1_1(genre = 'Drama'):
     db['upit1_1_1'].drop()
     db['metadata'].aggregate([
@@ -137,14 +136,14 @@ def upit1_1_1(genre = 'Drama'):
         { '$merge': 'upit1_1_1' }
     ])
 
-#DONE: Upit optimizovan koriscenjem indeksa
+#DONE: Optimized by using an index. Runtime reduced from ~400 seconds (~6.5 minutes) to ~3 seconds
 def upit1_1_2(genre = 'Drama'):
     db.keywords.create_index([ ("id", 1) ])
     upit1_1_1(genre)
 
-#DONE: Upit optimizovan koriscenjem optimizovane baze podataka
+#DONE: Optimised by using speed_collection
 def upit1_1_3(genre = "Drama"):
-    db['upit1_1_3'].drop()
+    db['upit1_1_1'].drop()
     db['speed_collection'].aggregate([
         { "$unwind": "$genres" },
         { "$match": { "genres.name": genre } },
@@ -162,11 +161,10 @@ def upit1_1_3(genre = "Drama"):
             }
         },
         { "$sort": { "count": -1 } },
-        { '$merge': 'upit1_1_3' }
+        { '$merge': 'upit1_1_1' }
     ])
 
 #DONE: Za prvih n glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima (tokom testiranja vrednost n = 10)
-#TODO: Optimized by using an index. Runtime reduced from ~30 seconds to ~1 second
 def upit1_2_1(n = 10):
     query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
     # print('Searching for actors: ', [actor["name"] for actor in query])
@@ -194,12 +192,12 @@ def upit1_2_1(n = 10):
         { '$merge': 'upit1_2_1' }
     ])
         
-#DONE: Upit optimizovan koriscenjem indeksa
+#DONE: Optimized by using an index. Runtime reduced from ~30 seconds to ~1 second
 def upit1_2_2(n = 10): 
     db.metadata.create_index([ ("id", 1) ])
     upit1_2_1(n)
     
-#DONE: Upit optimizovan koriscenjem optimizovane baze podataka
+#DONE: Optimised by using speed_collection
 def upit1_2_3(n = 10):
     query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
     db['upit1_2_1'].drop()
@@ -333,11 +331,32 @@ def upit1_4_1():
                   "totalProfit": { "$sum": "$economics.profit" },
               }
         },
+        { "$project":
+            {
+                "_id": 1,
+                "totalBudget": 
+                    { "$cond": 
+                        [
+                            { "$eq": [ "$_id", "1980-1985" ] },
+                            { "$multiply": [ 3, "$totalBudget" ] },
+                            { "$multiply": [ 1.28, "$totalBudget" ] }
+                        ]
+                    },
+                "totalProfit": 
+                    { "$cond": 
+                        [
+                            { "$eq": [ "$_id", "1980-1985" ] },
+                            { "$multiply": [ 3, "$totalProfit" ] },
+                            { "$multiply": [ 1.28, "$totalProfit" ] }
+                        ]
+                    },
+            }
+        },
+        { "$sort": { "_id": 1 } },
         { '$merge': 'upit1_4_1' }
     ])
 
 #DONE: Izlistaj polja (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
-#DONE: Optimized by using an index. Runtime reduced from ~20 minutes (~1200 seconds) to ~12 seconds
 def upit1_5_1():
     
     db['upit1_5_1'].drop()
@@ -404,12 +423,12 @@ def upit1_5_1():
         { '$merge': 'upit1_5_1' }
     ], allowDiskUse = True)
 
-#DONE: Upit optimizovan koriscenjem indeksa
+#DONE: Optimized by using an index. Runtime reduced from ~20 minutes (~1200 seconds) to ~12 seconds
 def upit1_5_2():
     db.credits.create_index([ ("id", -1) ])
     upit1_5_1()
 
-#TODO: Upit optimizovan koriscenjem optimizovane baze podataka
+#DONE: Optimised by using speed_collection
 def upit1_5_3():
     
     db['upit1_5_3'].drop()
@@ -697,4 +716,5 @@ def benchmark():
                     times['basic' if version == 1 else 'optimized'].append({functionName : timeRes})
     pprint.pprint(times, width=1)
 
-benchmark()
+#benchmark()
+upit1_4_1()
