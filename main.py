@@ -1,4 +1,5 @@
 import pymongo
+import numpy as np
 from datetime import datetime
 import pprint
 import pandas as pd
@@ -51,41 +52,124 @@ def findMinDate():
         { '$merge': 'min_date' }
         ])
 
+def speed_collection():
+    
+    db.keywords.create_index([ ("id", 1) ])
+    db.credits.create_index([ ("id", 1) ])
+    
+    db['speed_collection'].drop()
+    db['metadata'].aggregate([
+        #{"$limit": 40},
+        { "$project":
+            {
+                "id": 1,
+                "genres": 1,
+                "original_title": 1,
+                "spoken_languages": 1,
+                "budget": 1,
+                "revenue": 1,
+                "profit": { "$subtract" : [ "$revenue", "$budget" ] },
+                "vote_average": { "$toDouble": "$vote_average" },
+                "vote_count": { "$toDouble": "$vote_count" },
+            },
+        },
+        { "$lookup": 
+            {
+                "from": "keywords",
+                "localField": "id",
+                "foreignField": "id",
+                "pipeline":
+                [
+                    { '$project': {"_id": 0} },
+                ],
+                "as": "movieKeywords"
+            }
+        },
+        { "$lookup": 
+            {
+                "from": "credits",
+                "localField": "id",
+                "foreignField": "id",
+                "pipeline":
+                [
+                    { '$project': {"_id": 0} },
+                ],
+                "as": "movieCredits"
+            }
+        },
+        { '$merge': 'speed_collection' }
+        ])
+    db.keywords.drop_indexes()
+    db.credits.drop_indexes()
+        
 #DONE: Pronadji sve kljucne reci koje se povezuju sa filmovima odredjenog zanra, i poredjaj ih od najcescih do najredjih (zanr koriscen u upitu je 'Drama')
-#TODO: Optimize... Current runtime: ~370 seconds (~6 minutes)
-# =============================================================================
-# def upit1_1_1(genre = 'Drama'):
-#     db['upit1_1_1'].drop()
-#     db['metadata'].aggregate([
-#         { '$unwind': '$genres' },
-#         { '$match': { 'genres.name': genre} },
-#         { '$project': {'genres': 1, 'original_title': 1, 'id': 1 } },
-#         { "$lookup": 
-#            {
-#                 "from": "keywords",
-#                 "localField": "id",
-#                 "foreignField": "id",
-#                 "pipeline":
-#                 [
-#                     #{ '$project': {"_id": 0} },
-#                     { '$unwind': '$keywords' }
-#                 ],
-#                 "as": "keywordsForGenres"
-#             }
-#         },
-#         { '$unwind': '$keywordsForGenres' },
-#         # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
-#         { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
-# 
-#         { '$merge': 'upit1_1_1' }
-#     ])
-# =============================================================================
+#TODO: Optimized by using an index. Runtime reduced from ~400 seconds (~6.5 minutes) to ~3 seconds
+def upit1_1_1(genre = 'Drama'):
+    db['upit1_1_1'].drop()
+    db['metadata'].aggregate([
+        { '$unwind': '$genres' },
+        { '$match': { 'genres.name': genre} },
+        { '$project': {'genres': 1, 'original_title': 1, 'id': 1 } },
+        { "$lookup": 
+            {
+                "from": "keywords",
+                "localField": "id",
+                "foreignField": "id",
+                "pipeline":
+                [
+                    # { '$project': {"_id": 0} },
+                    { '$unwind': '$keywords' }
+                ],
+                "as": "keywordsForGenres"
+            }
+        },
+        { '$unwind': '$keywordsForGenres' },
+        # { "$match": { "keywordsForGenres.keywords.name": "woman director" } }, # debug print
+        # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
+        # { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
+        { "$group": 
+            {
+                "_id": "$keywordsForGenres.keywords.name",
+                "count": { "$sum": 1 }
+            }
+        },
+        { "$sort": { "count": -1 } },
+        { '$merge': 'upit1_1_1' }
+    ])
+
+#DONE: Upit optimizovan koriscenjem indeksa
+def upit1_1_2(genre = 'Drama'):
+    db.keywords.create_index([ ("id", 1) ])
+    upit1_1_1(genre)
+
+#DONE: Upit optimizovan koriscenjem optimizovane baze podataka
+def upit1_1_3(genre = "Drama"):
+    db['upit1_1_3'].drop()
+    db['speed_collection'].aggregate([
+        { "$unwind": "$genres" },
+        { "$match": { "genres.name": genre } },
+        # { "$match": { "movieKeywords.keywords.name": "woman director" } },
+        # { "$project": { "_id": 0 } },
+        # { "$project": { "genres._id": 0 } },
+        { "$project": { "genres": 1, "keywords": { "$first": "$movieKeywords" } } },
+        { '$unwind': '$keywords.keywords' },
+        # { '$unwind': '$movieKeywords.keywords' },
+        # { "$sortByCount" : "$keywords.keywords.name" },
+        { "$group": 
+            {
+                "_id": "$keywords.keywords.name",
+                "count": { "$sum": 1 }
+            }
+        },
+        { "$sort": { "count": -1 } },
+        { '$merge': 'upit1_1_3' }
+    ])
 
 #DONE: Za prvih n glumaca iz tabele 'credits_per_actor' prikazi sve jezike koji su se govorili u svim filmovima, grupisano po glumcima (tokom testiranja vrednost n = 10)
-#TODO: Optimize... Current runtime: ~30 seconds (this could present a problem with an increase to the number of actors the calculation is based on)
+#TODO: Optimized by using an index. Runtime reduced from ~30 seconds to ~1 second
 def upit1_2_1(n = 10):
     query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
-    print('Searching for actors: ', [actor["name"] for actor in query])
+    # print('Searching for actors: ', [actor["name"] for actor in query])
     db['upit1_2_1'].drop()
     db['credits'].aggregate([
         { "$project": { "crew": 0 } },
@@ -110,15 +194,38 @@ def upit1_2_1(n = 10):
         { '$merge': 'upit1_2_1' }
     ])
         
-def upit1_2_2(n = 10):
+#DONE: Upit optimizovan koriscenjem indeksa
+def upit1_2_2(n = 10): 
     db.metadata.create_index([ ("id", 1) ])
     upit1_2_1(n)
+    
+#DONE: Upit optimizovan koriscenjem optimizovane baze podataka
+def upit1_2_3(n = 10):
+    query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
+    db['upit1_2_1'].drop()
+    db['speed_collection'].aggregate([
+        { "$project": { "movieCredits.crew": 0 } },
+        { '$project': 
+             {
+                "spoken_languages": 1,
+                "cast": { "$first": "$movieCredits.cast"}
+             }
+        },
+        { "$unwind": "$cast"},
+        { "$unwind": "$spoken_languages"},
+        { "$match": { "cast.name": { "$in": [actor["name"] for actor in query] } } },
+        { "$group":
+              {
+                  "_id": "$cast.name",
+                  "languages": { "$addToSet": "$spoken_languages.name" }
+              }
+        },
+        { '$merge': 'upit1_2_1' }
+    ])
 
 #DONE: Pronadji sve filmove koji imaju prosecnu ocenu manju od 4, vise od 100 ocena i profit manji od 20% (filmovi sa budzetima i prihodima manjim od 10000 nisu uzeti u obzir)
 #TODO: Optimize...? (query request completes in under 1 second)
 def upit1_3_1():
-    print("Query started...")
-    t0 = time.time()
     db['upit1_3_1'].drop()
     db['metadata'].aggregate([
         { "$addFields":
@@ -164,14 +271,10 @@ def upit1_3_1():
         { "$sort": { "profitInPercent": -1 } },
         { '$merge': 'upit1_3_1' }
     ])
-    t1 = time.time()
-    print(t1-t0)
 
 #DONE: Prikazi ukupnu kolicinu novca ulozenu u proizvodnju filmova, kao i ukupni profit koji je ostvaren u okviru sledecih vremenskih intervala: 1980-1985, 2010-2015
 #TODO: Optimize...? (query request completes in under 1 second)
 def upit1_4_1():
-    print("Query started...")
-    t0 = time.time()
     db['upit1_4_1'].drop()
     db['metadata'].aggregate([
         { "$addFields":
@@ -232,17 +335,11 @@ def upit1_4_1():
         },
         { '$merge': 'upit1_4_1' }
     ])
-    t1 = time.time()
-    print(t1-t0)
 
 #DONE: Izlistaj polja (ako postoje) 'Director', 'Assistant Director', 'Writer', 'Producer' i 'Executive Producer' za sve filmove u opadajucem poretku profita.
-#DONE: Optimized by using an index. Time reduced from ~20 minutes (~1200 seconds) to ~12 seconds
+#DONE: Optimized by using an index. Runtime reduced from ~20 minutes (~1200 seconds) to ~12 seconds
 def upit1_5_1():
     
-    db.credits.create_index([ ("id", -1) ])
-    
-    print("Query started...")
-    t0 = time.time()
     db['upit1_5_1'].drop()
     db['metadata'].aggregate([
         { "$addFields":
@@ -306,18 +403,83 @@ def upit1_5_1():
         { "$sort": { "profit": -1 } },
         { '$merge': 'upit1_5_1' }
     ], allowDiskUse = True)
-    print("Dropping index..")
-    coll.drop_index([ ("id", -1) ])
-    print("Index dropped.")
-    pprint.pprint(coll.index_information())
-    t1 = time.time()
-    print(t1-t0)
+
+#DONE: Upit optimizovan koriscenjem indeksa
+def upit1_5_2():
+    db.credits.create_index([ ("id", -1) ])
+    upit1_5_1()
+
+#TODO: Upit optimizovan koriscenjem optimizovane baze podataka
+def upit1_5_3():
+    
+    db['upit1_5_3'].drop()
+    db['speed_collection'].aggregate([
+        # { "$limit": 100 },
+        { "$project": 
+              { 
+                  "_id": 0,
+                  "id": 1,
+                  "profit": 1,
+                  "original_title": 1,
+                  "credits": { "$first": "$movieCredits.crew" }
+              }
+        },
+        { "$unwind": "$credits" },
+        { "$project": 
+              { 
+                  "_id": 0,
+                  "id": 1,
+                  "profit": 1,
+                  "original_title": 1,
+                  "crew_member.job": "$credits.job",
+                  "crew_member.name": "$credits.name",
+              }
+        },
+        { "$match": 
+              { "$or":
+                  [
+                      { "crew_member.job": { "$eq": "Director" } },
+                      { "crew_member.job": { "$eq": "Assistant Director" } },
+                      { "crew_member.job": { "$eq": "Writer" } },
+                      { "crew_member.job": { "$eq": "Producer" } },
+                      { "crew_member.job": { "$eq": "Executive Producer" } }
+                  ]
+              }
+        },
+        { "$group":
+            {
+                "_id": { "id": "$id", "job": "$crew_member.job" },
+                "title": { "$first": "$original_title" },
+                "name": { "$push": "$crew_member.name" },
+                "profit": { "$first": "$profit" }
+            }
+        },
+        { "$project": 
+              { 
+                  "_id": "$_id.id",
+                  "crew_member.job": "$_id.job",
+                  "crew_member.name": "$name",
+                  "title": 1,
+                  "profit": 1,
+              }
+        },
+        { "$group":
+            {
+                "_id": "$_id",
+                "title": { "$first": "$title" },
+                "crew_members": { "$push": "$crew_member" },
+                "profit": { "$first": "$profit" }
+            }
+        },
+        { "$sort": { "profit": -1 } },
+        { '$merge': 'upit1_5_3' }
+    ], allowDiskUse = True)
 
 #GOTOV - Histogram ocena   
 def upit2_1_1():   
     db['ratings_hist'].drop()
     
-    db['ratings_small'].aggregate([
+    db['ratings'].aggregate([
         { 
          '$group': { '_id': "$rating", 'count': { '$sum': 1 } } 
          },
@@ -450,8 +612,8 @@ def insertCollections():
         'metadata', 
         jsonCols = ['belongs_to_collection', 'genres', 'production_companies', 'production_countries', 'spoken_languages'],
         converts = {
-            'budget': int,
-            'revenue': int
+            'budget': np.int64,
+            'revenue': np.int64
         },
         dateCols = ['release_date']
     )
@@ -517,21 +679,21 @@ def lookupTimeExperiment(expSize = 10):
     db['foodchain'].drop()
 
 def benchmark():
-    insertCollections()
+    #insertCollections()
     
     times = {'basic':[], 'optimized':[]}
     for half in range (1,3):
         for n in range(1,6):
-            for version in range(1,3):
+            for version in range(1,4):
                 for col in db.collection_names():
                     db[col].drop_indexes()
                 functionName = f"upit{half}_{n}_{version}"
                 if functionName in globals():
                     t0=time.time()
-                    print(f'started {functionName} at {datetime.fromtimestamp(t0).strftime("%Y-%B-%d %H:%M:%S")}')
+                    print(f'\nstarted {functionName} at {datetime.fromtimestamp(t0).strftime("%Y-%B-%d %H:%M:%S")}')
                     globals()[functionName]()
                     timeRes = time.time() - t0
-                    print(f'{functionName} za {round(timeRes,2)}s')
+                    print(f'{functionName} completed in {round(timeRes,2)}s')
                     times['basic' if version == 1 else 'optimized'].append({functionName : timeRes})
     pprint.pprint(times, width=1)
 
