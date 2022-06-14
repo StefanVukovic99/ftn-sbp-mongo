@@ -563,10 +563,9 @@ def upit2_3_1(directorName = 'Quentin Tarantino'):
     ])
 
 #GOTOV - zanrovi za glumca
-def upit2_4_1(actorName = 'Eddie Murphy'):
+def upit2_4_1(actorName = 'Christopher Lee'):
     db['genres_for_actor'].drop()
     db['credits'].aggregate([
-        { "$limit": 50 },
         { '$unwind': '$cast' },
         { '$match': { 'cast.name': actorName } },
         { '$project': { 'cast': 1, 'id': 1 } },
@@ -592,39 +591,74 @@ def upit2_4_1(actorName = 'Eddie Murphy'):
         { '$merge': 'genres_for_actor' }
     ])
 
-def upit2_4_2(actorName = 'Eddie Murphy'):
+def upit2_4_2(actorName = 'Christopher Lee'):
     db.metadata.create_index([ ("id", 1) ])
     upit2_4_1(actorName)
     
-#GOTOV - broj filmova po glumcu
+# =============================================================================
+# #GOTOV - broj filmova po glumcu
+# def upit2_5_1():
+#     db['credits_per_actor'].drop()
+#     db['credits'].aggregate([
+#         {
+#          '$project': {'cast': 1}
+#         },
+#         {
+#          '$unwind': '$cast'
+#         },
+#         {
+#          "$group": {
+#            "_id": "$cast.id",
+#            "name": { "$first": "$cast.name" },
+#            "count": { "$sum": 1 }
+#          }
+#         },
+#         {
+#          "$sort": {
+#           "count": -1
+#          }
+#         },
+#         {
+#          '$merge':{ 'into': "credits_per_actor" }
+#         }
+#     ])    
+# =============================================================================
+
 def upit2_5_1():
-    db['credits_per_actor'].drop()
-    db['credits'].aggregate([
+    db['std_dev_by_movie'].drop()
+    db['ratings'].aggregate([
+     { "$lookup": 
         {
-         '$project': {'cast': 1}
-        },
-        {
-         '$unwind': '$cast'
-        },
-        {
-         "$group": {
-           "_id": "$cast.id",
-           "name": { "$first": "$cast.name" },
-           "count": { "$sum": 1 }
+             "from": "metadata",
+             "localField": "movieId",
+             "foreignField": "id",
+             "as": "movieForRating"
          }
-        },
-        {
-         "$sort": {
+     },
+     {
+      "$group": {
+        "_id": "$movieId",
+        "name": { "$first": "$movieForRating.title" },
+        "count": { "$sum": 1 },
+        "stdDev": { "$stdDevSamp": "$rating"}
+      }
+     },
+     {
+      '$sort':{
           "count": -1
          }
-        },
-        {
-         '$merge':{ 'into': "credits_per_actor" }
-        }
+      },
+     {
+      '$merge':{ 'into': "std_dev_by_movie" }
+     }
     ])
     
+def upit2_5_2():
+    db.metadata.create_index([ ("id", 1) ])
+    upit2_5_1()
+    
 def insertCollections():    
-    insertCSV('ratings_small.csv', 'ratings_small')
+    insertCSV('ratings_small.csv', 'ratings', converts = { 'rating': np.double})
     
     insertCSV(
         'movies_metadata.csv', 
@@ -643,7 +677,7 @@ def insertCollections():
     
     insertCSV('credits.csv', 'credits', jsonCols =['cast', 'crew'])
     
-    insertCSV('ratings.csv', 'ratings')
+    #insertCSV('ratings.csv', 'ratings')
 
 
 # Eksperiment je utvrdio da 40k x 40k lookup merge treba oko 600 sekundi
@@ -702,7 +736,7 @@ def benchmark():
     
     times = {'basic':[], 'optimized':[]}
     for half in range (1,3):
-        for n in range(1,6):
+        for n in range(1,7):
             for version in range(1,4):
                 for col in db.collection_names():
                     db[col].drop_indexes()
@@ -715,6 +749,3 @@ def benchmark():
                     print(f'{functionName} completed in {round(timeRes,2)}s')
                     times['basic' if version == 1 else 'optimized'].append({functionName : timeRes})
     pprint.pprint(times, width=1)
-
-#benchmark()
-upit1_4_1()
