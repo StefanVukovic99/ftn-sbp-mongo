@@ -52,14 +52,13 @@ def findMinDate():
         { '$merge': 'min_date' }
         ])
 
-def speed_collection():
+def fast_collection():
     
     db.keywords.create_index([ ("id", 1) ])
     db.credits.create_index([ ("id", 1) ])
     
-    db['speed_collection'].drop()
+    db['fast_collection'].drop()
     db['metadata'].aggregate([
-        #{"$limit": 40},
         { "$project":
             {
                 "id": 1,
@@ -97,7 +96,7 @@ def speed_collection():
                 "as": "movieCredits"
             }
         },
-        { '$merge': 'speed_collection' }
+        { '$merge': 'fast_collection' }
         ])
     db.keywords.drop_indexes()
     db.credits.drop_indexes()
@@ -123,16 +122,8 @@ def upit1_1_1(genre = 'Drama'):
             }
         },
         { '$unwind': '$keywordsForGenres' },
-        # { "$match": { "keywordsForGenres.keywords.name": "woman director" } }, # debug print
-        # tresem se i placem evo sat vremena smo resavali problem kog nije bilo jaoj majko
-        # { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
-        { "$group": 
-            {
-                "_id": "$keywordsForGenres.keywords.name",
-                "count": { "$sum": 1 }
-            }
-        },
-        { "$sort": { "count": -1 } },
+        # tresem se i placem evo sat vremena smo resavali problem kog nije bilo
+        { "$sortByCount" : "$keywordsForGenres.keywords.name" }, #todorova magija
         { '$merge': 'upit1_1_1' }
     ])
 
@@ -141,26 +132,15 @@ def upit1_1_2(genre = 'Drama'):
     db.keywords.create_index([ ("id", 1) ])
     upit1_1_1(genre)
 
-#DONE: Optimised by using speed_collection
+#DONE: Optimised by using fast_collection
 def upit1_1_3(genre = "Drama"):
     db['upit1_1_1'].drop()
-    db['speed_collection'].aggregate([
+    db['fast_collection'].aggregate([
         { "$unwind": "$genres" },
         { "$match": { "genres.name": genre } },
-        # { "$match": { "movieKeywords.keywords.name": "woman director" } },
-        # { "$project": { "_id": 0 } },
-        # { "$project": { "genres._id": 0 } },
         { "$project": { "genres": 1, "keywords": { "$first": "$movieKeywords" } } },
         { '$unwind': '$keywords.keywords' },
-        # { '$unwind': '$movieKeywords.keywords' },
-        # { "$sortByCount" : "$keywords.keywords.name" },
-        { "$group": 
-            {
-                "_id": "$keywords.keywords.name",
-                "count": { "$sum": 1 }
-            }
-        },
-        { "$sort": { "count": -1 } },
+        { "$sortByCount" : "$keywords.keywords.name" },
         { '$merge': 'upit1_1_1' }
     ])
 
@@ -197,17 +177,17 @@ def upit1_2_2(n = 10):
     db.metadata.create_index([ ("id", 1) ])
     upit1_2_1(n)
     
-#DONE: Optimised by using speed_collection
+#DONE: Optimised by using fast_collection
 def upit1_2_3(n = 10):
     query = list(db.credits_per_actor.find({},{ "_id": 0, "count": 0 }).limit(n))
     db['upit1_2_1'].drop()
-    db['speed_collection'].aggregate([
+    db['fast_collection'].aggregate([
         { "$project": { "movieCredits.crew": 0 } },
         { '$project': 
-             {
+              {
                 "spoken_languages": 1,
                 "cast": { "$first": "$movieCredits.cast"}
-             }
+              }
         },
         { "$unwind": "$cast"},
         { "$unwind": "$spoken_languages"},
@@ -235,16 +215,15 @@ def upit1_3_1():
             }
         },
         { "$match":
-             { 
+              { 
                 "convertedVoteAverage": { "$lte": 4.0 },
                 "convertedVoteCount": { "$gte": 100 },
                 "economics.convertedRevenue": { "$gt": 10000 },
                 "economics.convertedBudget": { "$gt": 10000 } 
-             } 
+              } 
         },
         { "$addFields":
               {
-                  
                   "economics.requiredRevenue": { "$multiply": [ "$economics.convertedBudget", 1.20 ] },
                   "economics.profit": { "$subtract" : [ "$economics.convertedRevenue", "$economics.convertedBudget" ] }
               }
@@ -282,10 +261,10 @@ def upit1_4_1():
             }
         },
         { "$match":
-             { 
+              { 
                 "economics.convertedRevenue": { "$gt": 10000 },
                 "economics.convertedBudget": { "$gt": 10000 } 
-             } 
+              } 
         },
         { "$addFields":
               { "economics.profit": { "$subtract" : [ "$economics.convertedRevenue", "$economics.convertedBudget" ] } }
@@ -308,16 +287,16 @@ def upit1_4_1():
                           }, 
                           "1980-1985",
                           { "$cond":
-                               [
-                                   { "$and":
+                                [
+                                    { "$and":
                                         [
                                             {"$gte": ["$release_date", datetime.strptime('2010-01-01', '%Y-%m-%d')]},
                                             {"$lte": ["$release_date", datetime.strptime('2015-12-31', '%Y-%m-%d')]}
                                         ]
-                                   },
-                                   "2010-2015",
-                                   "---------"
-                               ]
+                                    },
+                                    "2010-2015",
+                                    "---------"
+                                ]
                           }
                       ]
                   }
@@ -371,21 +350,21 @@ def upit1_5_1():
             { "economics.profit": { "$subtract": [ "$economics.convertedRevenue", "$economics.convertedBudget" ] } }
         },
         { "$lookup":
-             {
+              {
                   "from": "credits",
                   "localField": "id",
                   "foreignField": "id",
                   "pipeline":
-                     [
-                         { "$project": { "crew": 1, "_id": 0 } },
-                         { "$unwind": "$crew"},
-                         { "$group":
-                             {
-                                 "_id": "$crew.job",
-                                 "names": { "$push": "$crew.name" }
-                             }
-                         }
-                     ],
+                      [
+                          { "$project": { "crew": 1, "_id": 0 } },
+                          { "$unwind": "$crew"},
+                          { "$group":
+                              {
+                                  "_id": "$crew.job",
+                                  "names": { "$push": "$crew.name" }
+                              }
+                          }
+                      ],
                   "as": "metadataForCredits"
               }
         },
@@ -401,7 +380,7 @@ def upit1_5_1():
               }
         },
         { "$match": 
-             { "$or":
+              { "$or":
                   [
                       { "metadataForCredits._id": { "$eq": "Director" } },
                       { "metadataForCredits._id": { "$eq": "Assistant Director" } },
@@ -409,7 +388,7 @@ def upit1_5_1():
                       { "metadataForCredits._id": { "$eq": "Producer" } },
                       { "metadataForCredits._id": { "$eq": "Executive Producer" } }
                   ]
-             }
+              }
         },
         { "$group":
             {
@@ -428,12 +407,11 @@ def upit1_5_2():
     db.credits.create_index([ ("id", -1) ])
     upit1_5_1()
 
-#DONE: Optimised by using speed_collection
+#DONE: Optimised by using fast_collection
 def upit1_5_3():
     
-    db['upit1_5_3'].drop()
-    db['speed_collection'].aggregate([
-        # { "$limit": 100 },
+    db['upit1_5_1'].drop()
+    db['fast_collection'].aggregate([
         { "$project": 
               { 
                   "_id": 0,
@@ -491,7 +469,7 @@ def upit1_5_3():
             }
         },
         { "$sort": { "profit": -1 } },
-        { '$merge': 'upit1_5_3' }
+        { '$merge': 'upit1_5_1' }
     ], allowDiskUse = True)
 
 #GOTOV - Histogram ocena   
@@ -749,3 +727,5 @@ def benchmark():
                     print(f'{functionName} completed in {round(timeRes,2)}s')
                     times['basic' if version == 1 else 'optimized'].append({functionName : timeRes})
     pprint.pprint(times, width=1)
+
+benchmark()
